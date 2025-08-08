@@ -163,6 +163,12 @@
   text-align: left;
 }
 
+.chart-container {
+  margin: 20px 0;
+  display: flex;
+  justify-content: center;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   .dashboard-grid {
@@ -183,6 +189,10 @@
   
   .bars-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .chart-container {
+    margin: 10px 0;
   }
 }
 

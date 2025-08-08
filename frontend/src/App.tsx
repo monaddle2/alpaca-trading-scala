@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import CandlestickChart from './components/CandlestickChart';
 
 interface AccountData {
   id: string;
@@ -170,6 +171,16 @@ function App() {
                   <p><strong>Ask:</strong> ${marketData.latestQuote.ap} ({marketData.latestQuote.as} shares)</p>
                   <p><strong>Spread:</strong> ${(marketData.latestQuote.ap - marketData.latestQuote.bp).toFixed(2)}</p>
                   <p><strong>Time:</strong> {new Date(marketData.latestQuote.t).toLocaleString()}</p>
+                </div>
+
+                {/* Candlestick Chart */}
+                <div className="chart-container">
+                  <CandlestickChart 
+                    data={marketData.recentBars} 
+                    symbol={marketData.symbol}
+                    width={500}
+                    height={300}
+                  />
                 </div>
 
                 {/* Recent Bars */}
