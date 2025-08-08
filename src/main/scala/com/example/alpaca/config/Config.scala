@@ -24,10 +24,10 @@ object Config:
     )
   
   def loadFromEnv(): AlpacaConfig =
-    val apiKey = sys.env.getOrElse("ALPACA_API_KEY", 
-      throw new IllegalArgumentException("ALPACA_API_KEY environment variable is required"))
-    val secretKey = sys.env.getOrElse("ALPACA_SECRET_KEY", 
-      throw new IllegalArgumentException("ALPACA_SECRET_KEY environment variable is required"))
+    val apiKey = sys.env.getOrElse("ALPACA_KEY", 
+      throw new IllegalArgumentException("ALPACA_KEY environment variable is required"))
+    val secretKey = sys.env.getOrElse("ALPACA_SECRET", 
+      throw new IllegalArgumentException("ALPACA_SECRET environment variable is required"))
     val baseUrl = sys.env.getOrElse("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
     val isPaper = sys.env.getOrElse("ALPACA_PAPER_TRADING", "true").toBoolean
     

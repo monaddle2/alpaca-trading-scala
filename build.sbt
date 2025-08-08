@@ -23,6 +23,14 @@ lazy val root = (project in file("."))
       // Configuration
       "com.typesafe" % "config" % "1.4.2",
       
+      // Web server
+      "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.9.10",
+      "com.softwaremill.sttp.tapir" %% "tapir-http4s-server" % "1.9.10",
+      "com.softwaremill.sttp.tapir" %% "tapir-json-circe" % "1.9.10",
+      "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle" % "1.9.10",
+      "org.http4s" %% "http4s-ember-server" % "0.23.24",
+      "org.http4s" %% "http4s-dsl" % "0.23.24",
+      
       // Testing
       "org.scalatest" %% "scalatest" % "3.2.17" % Test,
       "org.scalatestplus" %% "scalacheck-1-17" % "3.2.17.0" % Test
