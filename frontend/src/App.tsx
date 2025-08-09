@@ -183,19 +183,6 @@ function App() {
                   />
                 </div>
 
-                {/* Recent Bars */}
-                <div className="bars-info">
-                  <h4>Recent 1-Minute Bars</h4>
-                  <div className="bars-grid">
-                    {marketData.recentBars.map((bar, index) => (
-                      <div key={index} className="bar-item">
-                        <p><strong>Time:</strong> {new Date(bar.t).toLocaleTimeString()}</p>
-                        <p><strong>O:</strong> ${bar.o} <strong>H:</strong> ${bar.h} <strong>L:</strong> ${bar.l} <strong>C:</strong> ${bar.c}</p>
-                        <p><strong>Volume:</strong> {bar.v.toLocaleString()}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             )}
           </div>
