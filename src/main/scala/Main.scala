@@ -69,15 +69,24 @@ class AlpacaTradingWebServer extends LazyLogging:
       val marketDataEndpoint = endpoint
         .get
         .in("api" / "alpaca" / "market-data" / path[String]("symbol"))
+        .in(query[Option[String]]("start").description("Start date in ISO format (e.g., 2025-08-09T00:00:00Z)"))
+        .in(query[Option[String]]("end").description("End date in ISO format (e.g., 2025-08-09T23:59:59Z)"))
         .out(jsonBody[MarketDataResponse])
-        .description("Get market data for a given symbol")
+        .description("Get market data for a given symbol with optional date range")
         .tag("Alpaca")
       
       // Define the market data server logic
-      val marketDataServerLogic = marketDataEndpoint.serverLogic { symbol =>
+      val marketDataServerLogic = marketDataEndpoint.serverLogic { case (symbol, startOpt, endOpt) =>
+        // Default to Friday, August 8th, 2025 if no dates provided
+        val defaultStart = "2025-08-08T00:00:00Z"
+        val defaultEnd = "2025-08-08T23:59:59Z"
+        
+        val start = startOpt.getOrElse(defaultStart)
+        val end = endOpt.getOrElse(defaultEnd)
+        
         val latestTradeFuture = client.getLatestTrade(symbol)
         val latestQuoteFuture = client.getLatestQuote(symbol)
-        val barsFuture = client.getBars(symbol, "1Min", limit = Some(5))
+        val barsFuture = client.getBars(symbol, "1Min", start = Some(start), end = Some(end), limit = Some(100))
         
         (for {
           trade <- IO.fromFuture(IO(latestTradeFuture))

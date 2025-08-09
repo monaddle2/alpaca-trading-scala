@@ -212,8 +212,8 @@ class AlpacaTradingClient(config: AlpacaConfig)(using ExecutionContext) extends 
   
   // Market data operations
   def getBars(
-    symbol: String, 
-    timeframe: String, 
+    symbol: String,
+    timeframe: String,
     start: Option[String] = None,
     end: Option[String] = None,
     limit: Option[Int] = None
@@ -236,10 +236,14 @@ class AlpacaTradingClient(config: AlpacaConfig)(using ExecutionContext) extends 
       logger.info(s"📡 Bars response status: ${response.code}")
       response.body match
         case Right(json) => 
-          json.hcursor.downField("bars").as[List[Bar]] match
-            case Right(bars) => 
+          // Handle the case where bars might be null
+          json.hcursor.downField("bars").as[Option[List[Bar]]] match
+            case Right(Some(bars)) => 
               logger.info(s"✅ Successfully parsed ${bars.length} bars")
               bars
+            case Right(None) => 
+              logger.info("✅ No bars data available (bars field is null)")
+              List.empty[Bar]
             case Left(error) => 
               logger.error(s"Failed to parse bars: $error")
               throw new RuntimeException(s"Failed to parse bars: $error")
