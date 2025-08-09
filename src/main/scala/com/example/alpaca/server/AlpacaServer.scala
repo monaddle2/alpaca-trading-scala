@@ -4,7 +4,7 @@ import cats.effect.*
 import cats.implicits.*
 import com.example.alpaca.config.Config
 import com.example.alpaca.trading.AlpacaTradingClient
-import com.example.alpaca.{AlpacaDAL, AccountResponse, MarketDataResponse}
+import com.example.alpaca.{AlpacaDAL, AccountResponse, MarketDataResponse, MovingAverageResponse}
 import com.typesafe.scalalogging.LazyLogging
 import org.http4s.HttpApp
 import org.http4s.implicits.*
@@ -44,24 +44,43 @@ class AlpacaServer extends LazyLogging:
       dal.getAccount()
     }
     
-    // Define the market data endpoint
-    val marketDataEndpoint = endpoint
+    // Shared helper methods for market data endpoints
+    def marketDataBasePath = "api" / "alpaca" / "market-data" / path[String]("symbol")
+    
+    def startDateQuery = query[Option[String]]("start").description("Start date in ISO format (e.g., 2025-08-09T00:00:00Z)")
+    def endDateQuery = query[Option[String]]("end").description("End date in ISO format (e.g., 2025-08-09T23:59:59Z)")
+    
+    def createMarketDataEndpoint(basePath: EndpointInput[String]) = endpoint
       .get
-      .in("api" / "alpaca" / "market-data" / path[String]("symbol"))
-      .in(query[Option[String]]("start").description("Start date in ISO format (e.g., 2025-08-09T00:00:00Z)"))
-      .in(query[Option[String]]("end").description("End date in ISO format (e.g., 2025-08-09T23:59:59Z)"))
+      .in(basePath)
+      .in(startDateQuery)
+      .in(endDateQuery)
+      .tag("Alpaca")
+    
+    // Define the market data endpoint
+    val marketDataEndpoint = createMarketDataEndpoint(marketDataBasePath)
       .out(jsonBody[MarketDataResponse])
       .description("Get market data for a given symbol with optional date range")
-      .tag("Alpaca")
     
     // Define the market data server logic
     val marketDataServerLogic = marketDataEndpoint.serverLogic { case (symbol, startOpt, endOpt) =>
       dal.getMarketData(symbol, startOpt, endOpt)
     }
     
+    // Define the moving average endpoint
+    val movingAverageEndpoint = createMarketDataEndpoint(marketDataBasePath / "moving-average")
+      .in(query[Int]("N").description("Number of days for moving average calculation"))
+      .out(jsonBody[MovingAverageResponse])
+      .description("Calculate moving average for a given symbol with optional date range")
+    
+    // Define the moving average server logic
+    val movingAverageServerLogic = movingAverageEndpoint.serverLogic { case (symbol, startOpt, endOpt, n) =>
+      dal.getMovingAverage(symbol, startOpt, endOpt, n)
+    }
+    
     // Create Swagger documentation
     val swaggerEndpoints = SwaggerInterpreter()
-      .fromEndpoints[IO](List(accountEndpoint, marketDataEndpoint), "Alpaca Trading API", "1.0.0")
+      .fromEndpoints[IO](List(accountEndpoint, marketDataEndpoint, movingAverageEndpoint), "Alpaca Trading API", "1.0.0")
     
     val swaggerRoutes = Http4sServerInterpreter[IO]()
       .toRoutes(swaggerEndpoints)
@@ -71,7 +90,9 @@ class AlpacaServer extends LazyLogging:
       .toRoutes(accountServerLogic)
     val marketDataRoutes = Http4sServerInterpreter[IO]()
       .toRoutes(marketDataServerLogic)
-    val routes = accountRoutes <+> marketDataRoutes
+    val movingAverageRoutes = Http4sServerInterpreter[IO]()
+      .toRoutes(movingAverageServerLogic)
+    val routes = accountRoutes <+> marketDataRoutes <+> movingAverageRoutes
     
     // Combine routes
     val allRoutes = routes <+> swaggerRoutes

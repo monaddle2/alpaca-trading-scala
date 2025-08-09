@@ -4,6 +4,7 @@ import cats.effect.*
 import com.example.alpaca.trading.AlpacaTradingClient
 import com.typesafe.scalalogging.LazyLogging
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.math.BigDecimal
 
 class AlpacaDAL(client: AlpacaTradingClient) extends LazyLogging:
   
@@ -43,7 +44,7 @@ class AlpacaDAL(client: AlpacaTradingClient) extends LazyLogging:
     
     val latestTradeFuture = client.getLatestTrade(symbol)
     val latestQuoteFuture = client.getLatestQuote(symbol)
-    val barsFuture = client.getBars(symbol, "1Min", start = Some(start), end = Some(end), limit = Some(100))
+    val barsFuture = client.getBars(symbol, "1Min", start = Some(start), end = Some(end), limit = Some(1000))
     
     (for {
       trade <- IO.fromFuture(IO(latestTradeFuture))
@@ -61,6 +62,38 @@ class AlpacaDAL(client: AlpacaTradingClient) extends LazyLogging:
       logger.error(s"Error getting market data for $symbol", e)
       IO.pure(Left(()))
     }
+
+  /**
+   * Calculate moving average for a given symbol using existing market data logic
+   */
+  def getMovingAverage(symbol: String, startOpt: Option[String], endOpt: Option[String], n: Int): IO[Either[Unit, MovingAverageResponse]] =
+    getMarketData(symbol, startOpt, endOpt).map {
+      case Right(marketData) =>
+        val movingAverage = calculateMovingAverage(marketData.recentBars.map(_.c), n)
+        val response = MovingAverageResponse(
+          symbol = symbol,
+          movingAverage = movingAverage
+        )
+        Right(response)
+      case Left(error) => Left(error)
+    }
+
+  /**
+   * Calculate moving average for a list of prices
+   */
+  private[alpaca] def calculateMovingAverage(prices: List[BigDecimal], n: Int): List[Option[BigDecimal]] =
+    if n <= 0 || prices.isEmpty then
+      List.fill(prices.length)(None)
+    else
+      prices.zipWithIndex.map { case (price, index) =>
+        if index < n - 1 then
+          None // Not enough data points yet
+        else
+          val window = prices.slice(index - n + 1, index + 1)
+          val sum = window.sum
+          val average = sum / BigDecimal(n)
+          Some(average)
+      }
 
 // Response models for the API
 case class AccountResponse(
@@ -81,4 +114,9 @@ case class MarketDataResponse(
   latestTrade: com.example.alpaca.models.Trade,
   latestQuote: com.example.alpaca.models.Quote,
   recentBars: List[com.example.alpaca.models.Bar]
+)
+
+case class MovingAverageResponse(
+  symbol: String,
+  movingAverage: List[Option[BigDecimal]]
 )
