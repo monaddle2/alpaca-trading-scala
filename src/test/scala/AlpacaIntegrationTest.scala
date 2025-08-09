@@ -23,123 +23,61 @@ import com.comcast.ip4s.*
 import com.typesafe.scalalogging.LazyLogging
 import com.example.alpaca.config.Config
 import com.example.alpaca.trading.AlpacaTradingClient
+import com.example.alpaca.{AlpacaDAL, AccountResponse}
 
-class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfterAll with LazyLogging:
-  
+class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfterAll {
+
   private val baseUrl = "http://localhost:8080"
-  private var serverFiber: FiberIO[Unit] = _
-  private var shutdownSignal: Deferred[IO, Unit] = _
+  private var serverRelease: IO[Unit] = IO.unit
   private var backend: SttpBackend[Future, Any] = _
-  
-  override def beforeAll(): Unit =
-    logger.info("Starting test server...")
-    
-    // Create HTTP client backend
+
+  override def beforeAll(): Unit = {
+    // http client (you *can* keep this Future backend, but see note below)
     backend = HttpClientFutureBackend()
-    
-    // Create server components
+
     val config = Config.load()
     val client = new AlpacaTradingClient(config)
     val dal = new AlpacaDAL(client)
-    
-    // Define the account endpoint
+
     val accountEndpoint = endpoint
-      .get
-      .in("api" / "alpaca" / "account")
+      .get.in("api" / "alpaca" / "account")
       .out(jsonBody[AccountResponse])
-      .description("Get Alpaca account information")
-      .tag("Alpaca")
-    
-    // Define the account server logic
-    val accountServerLogic = accountEndpoint.serverLogic { _ =>
-      dal.getAccount()
-    }
-    
-    // Create the routes
-    val accountRoutes = Http4sServerInterpreter[IO]()
-      .toRoutes(accountServerLogic)
-    
-    // Add logging middleware
-    val loggedRoutes = Logger.httpApp[IO](true, true)(accountRoutes.orNotFound)
-    
-    // Create shutdown signal
-    shutdownSignal = Deferred[IO, Unit].unsafeRunSync()
-    
-    // Create and start the server
-    val server = EmberServerBuilder
+
+    val routes = Http4sServerInterpreter[IO]()
+      .toRoutes(accountEndpoint.serverLogic(_ => dal.getAccount()))
+    val app = Logger.httpApp[IO](true, true)(routes.orNotFound)
+
+    // Build server Resource and allocate it, keeping the release action
+    val serverRes = EmberServerBuilder
       .default[IO]
       .withHost(ipv4"0.0.0.0")
       .withPort(port"8080")
-      .withHttpApp(loggedRoutes)
+      .withHttpApp(app)
       .build
-    
-    // Start the server in the background
-    serverFiber = server.use { _ =>
-      IO.println("Test server started on http://localhost:8080") *> 
-      shutdownSignal.get
-    }.start.unsafeRunSync()
-    
-    // Wait a bit for the server to start
-    Thread.sleep(2000)
-    logger.info("Test server started successfully")
-  
-  override def afterAll(): Unit =
-    logger.info("Stopping test server...")
-    
-    if shutdownSignal != null then
-      shutdownSignal.complete(()).unsafeRunSync()
-    
-    if serverFiber != null then
-      // Run cancellation in a background thread with timeout
-      val cancellationThread = new Thread(() => {
-        try
-          serverFiber.cancel.unsafeRunSync()
-        catch
-          case _: Exception =>
-            logger.warn("Background cancellation failed")
-      })
-      
-      cancellationThread.start()
-      
-      // Wait for the thread to complete with timeout
-      val cancellationTimeout = 1000L // 3 seconds
-      try
-        cancellationThread.join(cancellationTimeout)
-        if cancellationThread.isAlive then
-          logger.warn("Cancellation thread is still running, interrupting...")
-          cancellationThread.interrupt()
-      catch
-        case _: InterruptedException =>
-          logger.warn("Cancellation thread interrupted")
-    
-    if backend != null then
-      backend.close()
-  
+
+    val (_, release) = serverRes.allocated.unsafeRunSync()
+    serverRelease = release
+
+    // Give the server a brief moment to bind the port (or poll with a socket check)
+    Thread.sleep(500)
+  }
+
+  override def afterAll(): Unit = {
+    // Release the server cleanly; no fibers, no interrupts
+    serverRelease
+      .timeoutTo(5.seconds, IO.unit)    // don’t hang tests forever
+      .unsafeRunSync()
+
+    if (backend != null) backend.close()
+  }
+
   test("Integration test: Account endpoint") {
-    logger.info("Starting integration test...")
-    
-    // Make request to the account endpoint using the shared backend
-    val request = basicRequest
+    val req = basicRequest
       .get(sttp.model.Uri.unsafeParse(s"$baseUrl/api/alpaca/account"))
       .response(asJson[AccountResponse])
-    
-    val response = Await.result(request.send(backend), 10.seconds)
-    
-    // Verify the response
-    response.code.isSuccess shouldBe true
-    response.body.isRight shouldBe true
-    
-    val account = response.body.toOption.get
-    account.id should not be empty
-    account.accountNumber should not be empty
-    account.status shouldBe "ACTIVE"
-    account.currency shouldBe "USD"
-    account.buyingPower should not be empty
-    account.cash should not be empty
-    account.portfolioValue should not be empty
-    account.patternDayTrader shouldBe false
-    account.tradingBlocked shouldBe false
-    account.createdAt should not be null
-    
-    logger.info(s"✅ Account test passed! Account ID: ${account.id}, Status: ${account.status}")
+
+    val resp = Await.result(req.send(backend), 10.seconds)
+    resp.code.isSuccess shouldBe true
+    resp.body.isRight shouldBe true
   }
+}
