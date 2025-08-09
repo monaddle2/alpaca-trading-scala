@@ -4,6 +4,7 @@ import cats.effect.*
 import cats.implicits.*
 import com.example.alpaca.config.Config
 import com.example.alpaca.trading.AlpacaTradingClient
+import com.example.alpaca.{AlpacaDAL, AccountResponse, MarketDataResponse}
 import com.typesafe.scalalogging.LazyLogging
 import org.http4s.HttpApp
 import org.http4s.HttpRoutes
@@ -34,6 +35,7 @@ class AlpacaTradingWebServer extends LazyLogging:
     try
       val config = Config.load()
       val client = new AlpacaTradingClient(config)
+      val dal = new AlpacaDAL(client)
       
       // Define the account endpoint
       val accountEndpoint = endpoint
@@ -43,26 +45,9 @@ class AlpacaTradingWebServer extends LazyLogging:
         .description("Get Alpaca account information")
         .tag("Alpaca")
       
-      // Define the server logic
+      // Define the account server logic
       val accountServerLogic = accountEndpoint.serverLogic { _ =>
-        IO.fromFuture(IO(client.getAccount())).map { account =>
-          val response = AccountResponse(
-            id = account.id,
-            accountNumber = account.accountNumber,
-            status = account.status,
-            currency = account.currency,
-            buyingPower = account.buyingPower,
-            cash = account.cash,
-            portfolioValue = account.portfolioValue,
-            patternDayTrader = account.patternDayTrader,
-            tradingBlocked = account.tradingBlocked,
-            createdAt = account.createdAt
-          )
-          Right(response)
-        }.handleErrorWith { e =>
-          logger.error("Error getting account information", e)
-          IO.pure(Left(("Failed to get account information", 500)))
-        }
+        dal.getAccount()
       }
       
       // Define the market data endpoint
@@ -77,33 +62,7 @@ class AlpacaTradingWebServer extends LazyLogging:
       
       // Define the market data server logic
       val marketDataServerLogic = marketDataEndpoint.serverLogic { case (symbol, startOpt, endOpt) =>
-        // Default to Friday, August 8th, 2025 if no dates provided
-        val defaultStart = "2025-08-08T00:00:00Z"
-        val defaultEnd = "2025-08-08T23:59:59Z"
-        
-        val start = startOpt.getOrElse(defaultStart)
-        val end = endOpt.getOrElse(defaultEnd)
-        
-        val latestTradeFuture = client.getLatestTrade(symbol)
-        val latestQuoteFuture = client.getLatestQuote(symbol)
-        val barsFuture = client.getBars(symbol, "1Min", start = Some(start), end = Some(end), limit = Some(100))
-        
-        (for {
-          trade <- IO.fromFuture(IO(latestTradeFuture))
-          quote <- IO.fromFuture(IO(latestQuoteFuture))
-          bars <- IO.fromFuture(IO(barsFuture))
-        } yield {
-          val response = MarketDataResponse(
-            symbol = symbol,
-            latestTrade = trade,
-            latestQuote = quote,
-            recentBars = bars
-          )
-          Right(response)
-        }).handleErrorWith { e =>
-          logger.error(s"Error getting market data for $symbol", e)
-          IO.pure(Left(("Failed to get market data", 500)))
-        }
+        dal.getMarketData(symbol, startOpt, endOpt)
       }
       
       // Create Swagger documentation
@@ -146,24 +105,3 @@ class AlpacaTradingWebServer extends LazyLogging:
       case e: Exception =>
         logger.error("Error starting web server", e)
         throw e
-
-// Response models for the API
-case class AccountResponse(
-  id: String,
-  accountNumber: String,
-  status: String,
-  currency: String,
-  buyingPower: String,
-  cash: String,
-  portfolioValue: String,
-  patternDayTrader: Boolean,
-  tradingBlocked: Boolean,
-  createdAt: java.time.Instant
-)
-
-case class MarketDataResponse(
-  symbol: String,
-  latestTrade: com.example.alpaca.models.Trade,
-  latestQuote: com.example.alpaca.models.Quote,
-  recentBars: List[com.example.alpaca.models.Bar]
-)
