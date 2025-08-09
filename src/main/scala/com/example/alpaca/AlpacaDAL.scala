@@ -95,6 +95,74 @@ class AlpacaDAL(client: AlpacaTradingClient) extends LazyLogging:
           Some(average)
       }
 
+  /**
+   * Detect crossover signals between two moving averages
+   * 
+   * @param maFast The fast moving average time series (same length as maSlow)
+   * @param maSlow The slow moving average time series (same length as maFast)
+   * @param timestamps The timestamps corresponding to each data point
+   * @return List of crossover signals with timestamp and type (Golden or Death)
+   */
+  def detectCrossovers(maFast: List[Option[BigDecimal]], maSlow: List[Option[BigDecimal]], timestamps: List[java.time.Instant]): List[CrossoverSignal] =
+    if maFast.length != maSlow.length || maFast.length != timestamps.length then
+      List.empty // Return empty list if lengths don't match
+    else
+      // Zip the three lists together and process each point
+      maFast.zip(maSlow).zip(timestamps).zipWithIndex.flatMap { case (((fastOpt, slowOpt), timestamp), index) =>
+        (fastOpt, slowOpt) match
+          case (Some(fast), Some(slow)) =>
+            // Check if we have enough data for comparison (need at least 2 points)
+            if index > 0 then
+              val prevFastOpt = maFast(index - 1)
+              val prevSlowOpt = maSlow(index - 1)
+              
+              (prevFastOpt, prevSlowOpt) match
+                case (Some(prevFast), Some(prevSlow)) =>
+                  // Check for golden cross: ma_fast[t-1] < ma_slow[t-1] and ma_fast[t] >= ma_slow[t]
+                  if prevFast < prevSlow && fast >= slow then
+                    List(CrossoverSignal(timestamp, CrossoverType.Golden))
+                  // Check for death cross: ma_fast[t-1] > ma_slow[t-1] and ma_fast[t] <= ma_slow[t]
+                  else if prevFast > prevSlow && fast <= slow then
+                    List(CrossoverSignal(timestamp, CrossoverType.Death))
+                  else
+                    List.empty
+                case _ => List.empty
+            else
+              List.empty
+          case _ => List.empty
+      }
+
+  /**
+   * Detect crossover signals for a given symbol using market data
+   * 
+   * @param symbol The trading symbol
+   * @param startOpt Optional start date
+   * @param endOpt Optional end date
+   * @param fastPeriod The period for the fast moving average
+   * @param slowPeriod The period for the slow moving average
+   * @return IO containing either error or crossover signals
+   */
+  def getCrossoverSignals(symbol: String, startOpt: Option[String], endOpt: Option[String], fastPeriod: Int, slowPeriod: Int): IO[Either[Unit, CrossoverResponse]] =
+    getMarketData(symbol, startOpt, endOpt).map {
+      case Right(marketData) =>
+        val prices = marketData.recentBars.map(_.c)
+        val timestamps = marketData.recentBars.map(_.t)
+        
+        val fastMA = calculateMovingAverage(prices, fastPeriod)
+        val slowMA = calculateMovingAverage(prices, slowPeriod)
+        
+        val crossovers = detectCrossovers(fastMA, slowMA, timestamps)
+        
+        val response = CrossoverResponse(
+          symbol = symbol,
+          fastPeriod = fastPeriod,
+          slowPeriod = slowPeriod,
+          signals = crossovers
+        )
+        Right(response)
+      case Left(error) => Left(error)
+    }
+
 // Response models for the API
 case class AccountResponse(
   id: String,
@@ -119,4 +187,20 @@ case class MarketDataResponse(
 case class MovingAverageResponse(
   symbol: String,
   movingAverage: List[Option[BigDecimal]]
+)
+
+// Crossover types and responses
+enum CrossoverType:
+  case Golden, Death
+
+case class CrossoverSignal(
+  timestamp: java.time.Instant,
+  crossoverType: CrossoverType
+)
+
+case class CrossoverResponse(
+  symbol: String,
+  fastPeriod: Int,
+  slowPeriod: Int,
+  signals: List[CrossoverSignal]
 )
