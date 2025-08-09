@@ -8,6 +8,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.BeforeAndAfterAll
 import scala.concurrent.duration.*
 import scala.concurrent.Await
+import scala.concurrent.{Future, ExecutionContext}
 import scala.concurrent.ExecutionContext.Implicits.global
 import cats.effect.*
 import cats.effect.unsafe.implicits.global
@@ -26,10 +27,15 @@ import com.example.alpaca.trading.AlpacaTradingClient
 class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfterAll with LazyLogging:
   
   private val baseUrl = "http://localhost:8080"
-  private var serverFiber: FiberIO[Nothing] = _
+  private var serverFiber: FiberIO[Unit] = _
+  private var shutdownSignal: Deferred[IO, Unit] = _
+  private var backend: SttpBackend[Future, Any] = _
   
   override def beforeAll(): Unit =
     logger.info("Starting test server...")
+    
+    // Create HTTP client backend
+    backend = HttpClientFutureBackend()
     
     // Create server components
     val config = Config.load()
@@ -56,6 +62,9 @@ class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfte
     // Add logging middleware
     val loggedRoutes = Logger.httpApp[IO](true, true)(accountRoutes.orNotFound)
     
+    // Create shutdown signal
+    shutdownSignal = Deferred[IO, Unit].unsafeRunSync()
+    
     // Create and start the server
     val server = EmberServerBuilder
       .default[IO]
@@ -66,7 +75,8 @@ class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfte
     
     // Start the server in the background
     serverFiber = server.use { _ =>
-      IO.println("Test server started on http://localhost:8080") *> IO.never
+      IO.println("Test server started on http://localhost:8080") *> 
+      shutdownSignal.get
     }.start.unsafeRunSync()
     
     // Wait a bit for the server to start
@@ -75,14 +85,40 @@ class AlpacaIntegrationTest extends AnyFunSuite with Matchers with BeforeAndAfte
   
   override def afterAll(): Unit =
     logger.info("Stopping test server...")
+    
+    if shutdownSignal != null then
+      shutdownSignal.complete(()).unsafeRunSync()
+    
     if serverFiber != null then
-      serverFiber.cancel.unsafeRunSync()
+      // Run cancellation in a background thread with timeout
+      val cancellationThread = new Thread(() => {
+        try
+          serverFiber.cancel.unsafeRunSync()
+        catch
+          case _: Exception =>
+            logger.warn("Background cancellation failed")
+      })
+      
+      cancellationThread.start()
+      
+      // Wait for the thread to complete with timeout
+      val cancellationTimeout = 1000L // 3 seconds
+      try
+        cancellationThread.join(cancellationTimeout)
+        if cancellationThread.isAlive then
+          logger.warn("Cancellation thread is still running, interrupting...")
+          cancellationThread.interrupt()
+      catch
+        case _: InterruptedException =>
+          logger.warn("Cancellation thread interrupted")
+    
+    if backend != null then
+      backend.close()
   
   test("Integration test: Account endpoint") {
-    // Create a simple HTTP client
-    val backend = HttpClientFutureBackend()
+    logger.info("Starting integration test...")
     
-    // Make request to the account endpoint
+    // Make request to the account endpoint using the shared backend
     val request = basicRequest
       .get(sttp.model.Uri.unsafeParse(s"$baseUrl/api/alpaca/account"))
       .response(asJson[AccountResponse])
